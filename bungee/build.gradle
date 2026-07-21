@@ -1,0 +1,5 @@
+group = "${rootProject.property('group')}.bungee"
+
+dependencies {
+    api project(':common')
+}
