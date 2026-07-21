@@ -1,0 +1,14 @@
+group = "${rootProject.property('group')}.folia"
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+}
+
+dependencies {
+    compileOnly 'dev.folia:folia-api:1.21.8-R0.1-SNAPSHOT'
+
+    compileOnly(project(':paper')) {
+        exclude group: 'org.spigotmc', module: 'spigot-api'
+    }
+    compileOnly project(':api')
+}
