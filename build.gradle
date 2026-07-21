@@ -71,6 +71,7 @@ shadowJar {
     archiveClassifier = ''
 
     relocate 'dev.dejvokep.boostedyaml', 'com.aquaticstudios.aqualib.libs.boostedyaml'
+    relocate 'com.github.senkex', 'com.aquaticstudios.aqualib.libs.senkex'
 }
 
 tasks.named('build') {

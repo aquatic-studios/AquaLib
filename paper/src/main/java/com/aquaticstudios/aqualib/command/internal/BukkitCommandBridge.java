@@ -10,7 +10,6 @@ import org.jetbrains.annotations.NotNull;
 
 import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -42,13 +41,11 @@ public final class BukkitCommandBridge extends org.bukkit.command.Command {
             return true;
         }
 
-        Match match = match(args, args.length);
-        RegisteredSubcommand sub = match.sub;
+        RegisteredSubcommand sub = match(args, args.length);
         if (sub == null) {
             sender.sendMessage(CC.set("&cUnknown subcommand. Try /" + command.name() + "."));
             return true;
         }
-        String[] subArgs = Arrays.copyOfRange(args, match.words, args.length);
 
         if (!sub.permission().isEmpty() && !sender.hasPermission(sub.permission())) {
             sender.sendMessage(CC.set(NO_PERMISSION));
@@ -69,7 +66,7 @@ public final class BukkitCommandBridge extends org.bukkit.command.Command {
 
         Object[] callArgs;
         try {
-            callArgs = bind(sender, sub, subArgs);
+            callArgs = bind(sender, sub, args);
         } catch (CommandException exception) {
             sender.sendMessage(CC.set(exception.getMessage()));
             return true;
@@ -97,39 +94,35 @@ public final class BukkitCommandBridge extends org.bukkit.command.Command {
         if (args.length == 0) {
             return Collections.emptyList();
         }
-        int typedWords = args.length - 1;
-        String current = args[typedWords].toLowerCase();
+        int typed = args.length - 1;
+        String current = args[typed].toLowerCase();
         List<String> suggestions = new ArrayList<>();
 
         for (RegisteredSubcommand sub : command.subcommands().values()) {
-            if (!isPermitted(sender, sub)) {
+            if (!isPermitted(sender, sub) || !prefixMatches(sub, args, Math.min(typed, sub.nameWords().length))) {
                 continue;
             }
-            String[] words = sub.nameWords();
-            if (words.length <= typedWords) {
-                continue;
-            }
-            boolean prefix = true;
-            for (int i = 0; i < typedWords; i++) {
-                if (!args[i].equalsIgnoreCase(words[i])) {
-                    prefix = false;
-                    break;
+            String[] path = sub.nameWords();
+            if (typed < path.length) {
+                String token = path[typed];
+                if (isParam(token)) {
+                    suggestions.addAll(completionAt(sub, paramsBefore(path, typed), sender));
+                } else {
+                    suggestions.add(token);
                 }
-            }
-            if (prefix) {
-                suggestions.add(words[typedWords]);
+            } else {
+                suggestions.addAll(completionAt(sub, paramsBefore(path, path.length) + (typed - path.length), sender));
+                for (CommandParameter parameter : sub.parameters()) {
+                    if (parameter.isSwitch()) {
+                        suggestions.add(parameter.switchFlag());
+                    }
+                }
             }
         }
 
-        Match match = match(args, typedWords);
-        RegisteredSubcommand sub = match.sub;
-        if (sub != null && isPermitted(sender, sub)) {
-            suggestions.addAll(completionAt(sub, typedWords - match.words, sender));
-            for (CommandParameter parameter : sub.parameters()) {
-                if (parameter.isSwitch()) {
-                    suggestions.add(parameter.switchFlag());
-                }
-            }
+        RegisteredSubcommand def = command.defaultSubcommand();
+        if (def != null && isPermitted(sender, def)) {
+            suggestions.addAll(completionAt(def, typed, sender));
         }
 
         List<String> filtered = new ArrayList<>();
@@ -142,28 +135,36 @@ public final class BukkitCommandBridge extends org.bukkit.command.Command {
         return filtered;
     }
 
-    @NotNull
-    private Match match(@NotNull String[] args, int limit) {
+    private RegisteredSubcommand match(@NotNull String[] args, int limit) {
         RegisteredSubcommand best = command.defaultSubcommand();
-        int bestWords = 0;
+        int bestScore = best == null ? -1 : 0;
+        int bestLength = 0;
+
         for (RegisteredSubcommand sub : command.subcommands().values()) {
-            String[] words = sub.nameWords();
-            if (words.length == 0 || words.length > limit) {
+            String[] path = sub.nameWords();
+            if (path.length == 0 || path.length > limit) {
                 continue;
             }
+            int literals = 0;
             boolean ok = true;
-            for (int i = 0; i < words.length; i++) {
-                if (!args[i].equalsIgnoreCase(words[i])) {
+            for (int i = 0; i < path.length; i++) {
+                String token = path[i];
+                if (isParam(token)) {
+                    continue;
+                }
+                if (!args[i].equalsIgnoreCase(token)) {
                     ok = false;
                     break;
                 }
+                literals++;
             }
-            if (ok && words.length > bestWords) {
+            if (ok && (literals > bestScore || (literals == bestScore && path.length > bestLength))) {
                 best = sub;
-                bestWords = words.length;
+                bestScore = literals;
+                bestLength = path.length;
             }
         }
-        return new Match(best, bestWords);
+        return best;
     }
 
     @NotNull
@@ -171,6 +172,7 @@ public final class BukkitCommandBridge extends org.bukkit.command.Command {
         CommandParameter[] parameters = sub.parameters();
         Object[] call = new Object[parameters.length + 1];
         call[0] = sender;
+        String[] path = sub.nameWords();
 
         Set<String> knownFlags = new HashSet<>();
         for (CommandParameter parameter : parameters) {
@@ -181,7 +183,13 @@ public final class BukkitCommandBridge extends org.bukkit.command.Command {
 
         List<String> positional = new ArrayList<>();
         Set<String> presentFlags = new HashSet<>();
-        for (String token : args) {
+        for (int i = 0; i < path.length; i++) {
+            if (isParam(path[i])) {
+                positional.add(args[i]);
+            }
+        }
+        for (int i = path.length; i < args.length; i++) {
+            String token = args[i];
             if (knownFlags.contains(token.toLowerCase())) {
                 presentFlags.add(token.toLowerCase());
             } else {
@@ -203,11 +211,14 @@ public final class BukkitCommandBridge extends org.bukkit.command.Command {
                 continue;
             }
             if (index >= positional.size()) {
-                if (parameter.isOptional()) {
-                    call[i + 1] = defaultValue(parameter.type());
-                    continue;
+                if (parameter.hasDefault()) {
+                    call[i + 1] = resolveDefault(sender, parameter);
+                } else if (parameter.isOptional()) {
+                    call[i + 1] = emptyValue(parameter.type());
+                } else {
+                    throw new CommandException(usageMessage(sub));
                 }
-                throw new CommandException(usageMessage(sub));
+                continue;
             }
 
             String token;
@@ -218,14 +229,29 @@ public final class BukkitCommandBridge extends org.bukkit.command.Command {
                 token = positional.get(index);
                 index++;
             }
-
-            Object value = arguments.parse(parameter.type(), sender, token);
-            if (parameter.isRanged() && value instanceof Number) {
-                validateRange((Number) value, parameter);
-            }
-            call[i + 1] = value;
+            call[i + 1] = parseValue(sender, parameter, token);
         }
         return call;
+    }
+
+    @NotNull
+    private Object parseValue(@NotNull CommandSender sender, @NotNull CommandParameter parameter, @NotNull String token) {
+        Object value = arguments.parse(parameter.type(), sender, token);
+        if (parameter.isRanged() && value instanceof Number) {
+            validateRange((Number) value, parameter);
+        }
+        return value;
+    }
+
+    private Object resolveDefault(@NotNull CommandSender sender, @NotNull CommandParameter parameter) {
+        String def = parameter.defaultValue();
+        if ((def.equalsIgnoreCase("me") || def.equalsIgnoreCase("self")) && Player.class.isAssignableFrom(parameter.type())) {
+            if (sender instanceof Player) {
+                return sender;
+            }
+            throw new CommandException(PLAYER_ONLY);
+        }
+        return parseValue(sender, parameter, def);
     }
 
     private boolean lastPositional(@NotNull CommandParameter[] parameters, int index) {
@@ -268,7 +294,7 @@ public final class BukkitCommandBridge extends org.bukkit.command.Command {
         return String.valueOf(value);
     }
 
-    private Object defaultValue(@NotNull Class<?> type) {
+    private Object emptyValue(@NotNull Class<?> type) {
         if (type == int.class) {
             return 0;
         }
@@ -296,13 +322,38 @@ public final class BukkitCommandBridge extends org.bukkit.command.Command {
         return null;
     }
 
+    private boolean prefixMatches(@NotNull RegisteredSubcommand sub, @NotNull String[] args, int upto) {
+        String[] path = sub.nameWords();
+        for (int i = 0; i < upto; i++) {
+            String token = path[i];
+            if (!isParam(token) && !args[i].equalsIgnoreCase(token)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private int paramsBefore(@NotNull String[] path, int position) {
+        int count = 0;
+        for (int i = 0; i < position; i++) {
+            if (isParam(path[i])) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     @NotNull
-    private List<String> completionAt(@NotNull RegisteredSubcommand sub, int index, @NotNull CommandSender sender) {
+    private List<String> completionAt(@NotNull RegisteredSubcommand sub, int slot, @NotNull CommandSender sender) {
         String[] specs = sub.completions();
-        if (index < 0 || index >= specs.length) {
+        if (slot < 0 || slot >= specs.length) {
             return Collections.emptyList();
         }
-        return completions.resolve(specs[index], sender);
+        return completions.resolve(specs[slot], sender);
+    }
+
+    private boolean isParam(@NotNull String token) {
+        return token.length() >= 2 && token.charAt(0) == '<' && token.charAt(token.length() - 1) == '>';
     }
 
     private boolean isPermitted(@NotNull CommandSender sender, @NotNull RegisteredSubcommand sub) {
@@ -319,16 +370,5 @@ public final class BukkitCommandBridge extends org.bukkit.command.Command {
             builder.append(' ').append(sub.usage());
         }
         return builder.toString();
-    }
-
-    private static final class Match {
-
-        private final RegisteredSubcommand sub;
-        private final int words;
-
-        private Match(RegisteredSubcommand sub, int words) {
-            this.sub = sub;
-            this.words = words;
-        }
     }
 }
