@@ -1,0 +1,91 @@
+plugins {
+    id 'java'
+    id 'maven-publish'
+    id 'com.gradleup.shadow' version '9.6.0'
+}
+
+allprojects {
+    group = rootProject.property('group')
+    version = rootProject.property('version')
+
+    repositories {
+        mavenCentral()
+        maven { url = 'https://repo.papermc.io/repository/maven-public/' }
+        maven { url = 'https://hub.spigotmc.org/nexus/content/repositories/snapshots/' }
+        maven { url = 'https://oss.sonatype.org/content/repositories/snapshots' }
+        maven { url = 'https://jitpack.io' }
+    }
+}
+
+subprojects {
+    apply plugin: 'java-library'
+
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(21)
+        }
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+        options.release = 17
+
+        options.compilerArgs += '-parameters'
+    }
+
+    dependencies {
+        compileOnly 'org.projectlombok:lombok:1.18.34'
+        annotationProcessor 'org.projectlombok:lombok:1.18.34'
+
+        compileOnly 'org.jetbrains:annotations:26.0.1'
+    }
+}
+
+dependencies {
+    implementation project(':api')
+    implementation project(':common')
+
+    implementation project(':paper')
+    implementation project(':folia')
+    implementation project(':velocity')
+    implementation project(':bungee')
+
+    implementation project(':nms:v1_16_R3')
+    implementation project(':nms:v1_17_R1')
+    implementation project(':nms:v1_18_R2')
+    implementation project(':nms:v1_19_R3')
+    implementation project(':nms:v1_20_R4')
+    implementation project(':nms:v1_21_R1')
+
+    implementation project(':senkex')
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    withSourcesJar()
+}
+
+shadowJar {
+    archiveClassifier = ''
+
+    relocate 'dev.dejvokep.boostedyaml', 'com.aquaticstudios.aqualib.libs.boostedyaml'
+}
+
+tasks.named('build') {
+    dependsOn tasks.named('shadowJar')
+}
+
+publishing {
+    publications {
+        aqualib(MavenPublication) {
+            groupId = project.group
+            artifactId = 'AquaLib'
+            version = project.version
+
+            artifact tasks.named('shadowJar')
+            artifact tasks.named('sourcesJar')
+        }
+    }
+}
