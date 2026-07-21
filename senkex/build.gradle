@@ -1,0 +1,8 @@
+group = "${rootProject.property('group')}.senkex"
+
+dependencies {
+    compileOnly 'org.spigotmc:spigot-api:1.16.5-R0.1-SNAPSHOT'
+
+    api 'com.github.senkex:HeadRender:2.0.0'
+    api 'com.github.senkex:CenterMessage:3.0.1'
+}

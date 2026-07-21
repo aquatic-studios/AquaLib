@@ -1,0 +1,9 @@
+group = "${rootProject.property('group')}.paper"
+
+dependencies {
+
+    api project(':api')
+    api project(':common')
+
+    compileOnly 'org.spigotmc:spigot-api:1.16.5-R0.1-SNAPSHOT'
+}
