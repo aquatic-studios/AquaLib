@@ -1,0 +1,5 @@
+group = "${rootProject.property('group')}.nms.v1_16_R3"
+
+dependencies {
+    api project(':api')
+}
